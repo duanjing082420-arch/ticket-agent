@@ -1,0 +1,21 @@
+# 凭据：绝不能进版本库
+.env
+
+# 虚拟环境
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 运行产物：日志与评测报告
+logs/
+eval/*.json
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
