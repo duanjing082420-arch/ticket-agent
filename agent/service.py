@@ -34,6 +34,27 @@ from .prompts import (
 from .tools import confirm_pending
 from .memory import MemoryStore
 
+
+def _pick_loop_impl(impl: str):
+    """按配置选自主循环的实现。
+
+    两种实现返回完全相同的 LoopResult，因此切换不影响上层：
+      - plain：agent/loop.py 的手写 for 循环（默认，零额外依赖）
+      - graph：agent/graph_loop.py 的 LangGraph 状态图（刹车画成条件边）
+
+    降级路径（硬约束 C4）：graph 实现依赖 langgraph，导入失败时
+    自动退回手写循环并打点告警，绝不因为缺依赖就让服务起不来。
+    """
+    if impl == "graph":
+        try:
+            from .graph_loop import run_graph_loop
+
+            return run_graph_loop
+        except Exception as exc:  # 依赖缺失 / 版本不兼容，一律降级
+            emit("loop_impl_fallback", to="plain", error=type(exc).__name__)
+            return run_loop
+    return run_loop
+
 # —— 注入预检：确定性地拦住最常见的提示注入，不把这类请求送进 LLM ——
 _INJECTION_PATTERNS = [
     r"忽略(?:以上|上面|之前)(?:的)?(?:所有)?(?:指令|规则|设定)",
@@ -102,6 +123,7 @@ class TicketAgent:
         self.s = settings
         self.llm = LLMClient(settings)
         self.memory = MemoryStore(self.s.memory_db_path)  # 长期记忆：跨会话记住每个用户
+        self._loop = _pick_loop_impl(settings.loop_impl)  # 自主循环实现（可切换）
 
     # ---------------- 路由 ----------------
 
@@ -209,7 +231,7 @@ class TicketAgent:
         ctx = {"user_id": user_input.user_id, "trace_id": trace_id}
 
         with span("agent_loop", intent=intent):
-            loop_result: LoopResult = run_loop(self.llm, messages, ctx, self.s)
+            loop_result: LoopResult = self._loop(self.llm, messages, ctx, self.s)
 
         # 长期记忆落盘：把这一轮（用户问题 + 最终回答）存回，供后续会话回忆
         self.memory.save_turn(user_input.user_id, clean, loop_result.content)

@@ -1,0 +1,14 @@
+# 可选依赖：只有使用 LangGraph 版自主循环时才需要安装。
+#
+# 默认（AGENT_LOOP_IMPL=plain）走 agent/loop.py 的手写 for 循环，
+# **不需要**这两个包 —— 保持主依赖干净是刻意的设计：
+# 手写循环只有一个目的（跑通有界自主），没必要为一个可选实现拖重所有环境。
+#
+# 想用状态图版本：
+#     pip install -r requirements-langgraph.txt
+#     AGENT_LOOP_IMPL=graph python app.py --once "我要退款，订单号 SO20240905004"
+#
+# 版本按 2026-10-21 实测锁定（langgraph 迭代极快，务必锁版本）。
+# 若导入失败，service.py 会自动降级回手写循环并打点告警，服务不会起不来。
+langgraph==1.2.16
+langchain-core==1.6.12
