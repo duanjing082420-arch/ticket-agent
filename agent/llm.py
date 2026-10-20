@@ -76,15 +76,24 @@ class LLMClient:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+        # DeepSeek 思考模式默认开启（effort=high）。客服工单场景不需要链式推理，
+        # 开启会让输出 token 涨 5~27 倍（按输出价计费，见 tutorials/day12_thinking_400.py）。
+        # 关闭方式：extra_body={"thinking": {"type": "disabled"}}，SDK 会在发送前摊平。
+        # 注意：直接传 kwargs["thinking"] 会被 OpenAI SDK 拦截（TypeError）；
+        # 用 urllib/HTTP 直发时则没有 extra_body 概念，得放请求体顶层。
+        if "deepseek" in self.s.llm_base_url.lower():
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         return self._client.chat.completions.create(**kwargs)
 
     def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-        temperature: float = 0.2,
+        temperature: float | None = None,
     ) -> LLMResult:
         """主入口：先主模型，失败后降级到备用模型，再失败返回结构化错误。"""
+        if temperature is None:
+            temperature = self.s.llm_temperature
         for attempt, model in enumerate((self.s.llm_model, self.s.llm_fallback_model)):
             try:
                 resp = self._chat(model, messages, tools, temperature)

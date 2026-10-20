@@ -32,6 +32,7 @@ from .prompts import (
     SYSTEM_PROMPT,
 )
 from .tools import confirm_pending
+from .memory import MemoryStore
 
 # —— 注入预检：确定性地拦住最常见的提示注入，不把这类请求送进 LLM ——
 _INJECTION_PATTERNS = [
@@ -100,6 +101,7 @@ class TicketAgent:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
         self.llm = LLMClient(settings)
+        self.memory = MemoryStore(self.s.memory_db_path)  # 长期记忆：跨会话记住每个用户
 
     # ---------------- 路由 ----------------
 
@@ -198,14 +200,19 @@ class TicketAgent:
                 latency_ms=int((time.perf_counter() - started) * 1000),
             )
 
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": clean},
-        ]
+        # 长期记忆注入：把该用户最近的对话历史拼到 system 之后、当前问题之前。
+        # 历史为空（新用户 / 评测独立 user_id）时，等价于改造前的 [system, user]，行为不变。
+        history = self.memory.load_history(user_input.user_id, limit=6)
+        messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": clean})
         ctx = {"user_id": user_input.user_id, "trace_id": trace_id}
 
         with span("agent_loop", intent=intent):
             loop_result: LoopResult = run_loop(self.llm, messages, ctx, self.s)
+
+        # 长期记忆落盘：把这一轮（用户问题 + 最终回答）存回，供后续会话回忆
+        self.memory.save_turn(user_input.user_id, clean, loop_result.content)
 
         behavior = self._to_behavior(loop_result, clean)
         cost = self.llm.estimate_cost(loop_result.prompt_tokens, loop_result.completion_tokens)

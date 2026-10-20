@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 import time
@@ -87,6 +88,8 @@ def main() -> int:
     ap.add_argument("--out", default="eval/report.json")
     ap.add_argument("--dry-run", action="store_true", help="只校验用例格式，不调 LLM")
     ap.add_argument("--log-level", default="WARNING")
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="采样温度：默认 0 保证评测确定性；调高可复现 flaky")
     args = ap.parse_args()
 
     force_utf8_stdout()
@@ -113,6 +116,13 @@ def main() -> int:
         return 0
 
     settings = Settings.from_env()
+    # Settings 是 frozen dataclass，不能直接赋值；用 replace 生成新实例
+    settings = dataclasses.replace(settings, llm_temperature=args.temperature)
+    # 评测隔离记忆：用独立库并在运行前清空，避免跨运行污染真实对话数据
+    # （之前用固定 eval-{id} 做 user_id，导致上一次评测的历史被下一次加载，结果完全不可复现）
+    eval_memory_db = "data/_eval_memory.db"
+    Path(eval_memory_db).unlink(missing_ok=True)
+    settings = dataclasses.replace(settings, memory_db_path=eval_memory_db)
     agent = TicketAgent(settings)
 
     results = []

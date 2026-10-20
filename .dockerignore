@@ -1,0 +1,41 @@
+# .dockerignore：告诉 Docker「哪些文件别进构建上下文、别进镜像」。
+# 作用类似 .gitignore，但管的是 docker build。
+#
+# 为什么必须写：
+# 1) 防止密钥泄漏 —— .env 一旦被 COPY 进镜像，谁拿到镜像谁就能解包拿到你的 API key
+# 2) 缩小构建上下文 —— .git、.venv 动辄几十上百 MB，白白拖慢每次 build
+# 3) 防止「脏数据」被固化 —— 运行期产生的 db / 缓存不该进模板
+
+# ---- 凭据：最高优先级，绝不进镜像 ----
+.env
+.env.example
+
+# ---- 依赖环境：镜像里会用纯净的 Python 重装，本机 venv 不能带进去 ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ---- 版本控制与编辑器 ----
+.git/
+.vscode/
+.idea/
+.DS_Store
+
+# ---- 运行产物：日志与评测报告 ----
+logs/
+eval/*.json
+
+# ---- 教程脚本：容器只跑服务，不需要 ----
+tutorials/
+
+# ---- data/ 里的运行期数据：每次容器自己生成，不该固化进模板 ----
+# memory.db          含真实对话历史，既隐私又是运行态，必须排除
+# _eval_memory.db    评测用的临时隔离库
+# policy_vectors.json embedding 缓存（341KB），它由 policies.md 内容哈希驱动，
+#                    内容变了会自动重算，漏 COPY 只影响首次冷启动速度，不影响正确性
+data/memory.db
+data/_eval_memory.db
+data/policy_vectors.json

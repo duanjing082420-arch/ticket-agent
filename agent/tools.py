@@ -258,19 +258,27 @@ def _get_shipment(args: dict[str, Any], ctx: dict[str, Any]) -> ToolResult:
 
 
 def _search_policy(args: dict[str, Any], ctx: dict[str, Any]) -> ToolResult:
-    keyword = (args.get("keyword") or "").strip()
+    keyword = (args.get("keyword") or args.get("query") or "").strip()
     if not keyword:
         return ToolResult("search_policy", False, error="missing_keyword")
-    policies = _load_data()["policies"]
-    hits = [p for p in policies if keyword in p["title"] or keyword in p["body"]]
-    if not hits:
-        # 关键词没命中就退化为逐条包含匹配，提高召回
-        hits = [p for p in policies if any(ch in p["body"] for ch in keyword)]
-    emit("tool_search_policy", keyword=keyword, hit_count=len(hits))
+    try:
+        # 真检索：语义向量检索 data/policies.md（15 条真实售后政策）
+        # 把"意思相近"的政策找出来，而不是死板地找"相同的字"
+        from .rag import retrieve
+        hits = retrieve(keyword, top_k=3)
+    except Exception:
+        # 兜底降级：embedding 服务异常 / 无 key 时，退回关键词匹配。
+        # 目的不是结果好，而是"检索链路挂了也不能让整个工具崩"。
+        policies = _load_data()["policies"]
+        hits = [p for p in policies if keyword in p["title"] or keyword in p["body"]]
+        if not hits:
+            hits = [p for p in policies if any(ch in p["body"] for ch in keyword)]
+        hits = [{"id": p["id"], "title": p["title"], "body": p["body"]} for p in hits]
+    emit("tool_search_policy", keyword=keyword, hit_count=len(hits), retriever="rag" if len(hits) <= 3 else "fallback")
     return ToolResult(
         "search_policy",
         True,
-        payload={"policies": [{"id": p["id"], "title": p["title"], "body": p["body"]} for p in hits]},
+        payload={"policies": hits},
     )
 
 

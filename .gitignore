@@ -15,6 +15,14 @@ __pycache__/
 logs/
 eval/*.json
 
+# 运行期生成的数据：不得进版本库
+# memory.db 含真实对话历史（隐私 + 运行态）
+# _eval_memory.db 是评测用的隔离库
+# policy_vectors.json 是 embedding 缓存，由 policies.md 内容哈希驱动、会自动重算
+data/memory.db
+data/_eval_memory.db
+data/policy_vectors.json
+
 # 编辑器
 .vscode/
 .idea/
