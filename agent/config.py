@@ -54,6 +54,7 @@ class Settings:
     llm_temperature: float    # 采样温度：0=确定性，>0=允许随机；评测/生产关键路径建议 0
     memory_db_path: str       # 记忆库路径；评测用隔离库避免污染真实对话数据
     loop_impl: str            # 自主循环实现：plain=手写 for 循环（默认）/ graph=LangGraph 状态图
+    agent_mode: str           # 编排模式：supervisor=多 Agent 主管派单（默认）/ monolith=单体 Agent
 
     # —— 超时（硬约束 C4：必须显式数值，禁止依赖客户端默认值）——
     llm_timeout_s: float        # 单次 LLM 请求超时
@@ -89,6 +90,7 @@ class Settings:
             llm_temperature=float(_env("LLM_TEMPERATURE", "0.2")),
             memory_db_path=_env("MEMORY_DB_PATH", "data/memory.db"),
             loop_impl=_env("AGENT_LOOP_IMPL", "plain"),
+            agent_mode=_env("AGENT_MODE", "supervisor"),
             llm_timeout_s=float(_env("LLM_TIMEOUT_S", "30")),
             tool_timeout_s=float(_env("TOOL_TIMEOUT_S", "5")),
             max_steps=int(_env("MAX_STEPS", "6")),

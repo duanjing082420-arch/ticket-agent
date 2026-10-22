@@ -55,15 +55,22 @@ def run_loop(
     ctx: dict[str, Any],
     settings: Settings,
     on_token=None,
+    tools: list[dict[str, Any]] | None = None,
 ) -> LoopResult:
     """执行有界自主循环。messages 会被就地追加（调用方如需保留可自行深拷贝）。
 
     on_token: 可选回调 (delta: str) -> None。传了就走流式 LLM 调用，
     生成的每个 token 片段都会回调一次 —— 供 SSE 端点逐字推给前端。
     不传则走普通的 llm.chat()，行为与改造前完全一致（保证评测不受影响）。
+
+    tools: 可选工具白名单。传了就只把这批工具暴露给模型（多 Agent 模式下，
+    每个专家只看到自己领域的工具，减少"工具太多用错"的概率，对应坑 #6）；
+    不传则回退到全部 TOOL_SCHEMAS，与原行为完全一致。
     """
     started = time.monotonic()
     result = LoopResult(content="")
+    if tools is None:
+        tools = TOOL_SCHEMAS
 
     seen_actions: set[str] = set()
     consecutive_no_progress = 0
@@ -79,9 +86,9 @@ def run_loop(
         with span("llm_step", step=step):
             # 只有传了 on_token 才走流式；否则保持原路径，确保非流式场景零变化
             if on_token is not None:
-                resp: LLMResult = llm.stream_chat(messages, tools=TOOL_SCHEMAS, on_token=on_token)
+                resp: LLMResult = llm.stream_chat(messages, tools=tools, on_token=on_token)
             else:
-                resp: LLMResult = llm.chat(messages, tools=TOOL_SCHEMAS)
+                resp: LLMResult = llm.chat(messages, tools=tools)
 
         result.steps = step
         result.prompt_tokens += resp.prompt_tokens

@@ -34,6 +34,7 @@ from .prompts import (
 from .tools import confirm_pending
 from .memory import MemoryStore
 from .cache import SemanticCache
+from .supervisor import dispatch
 
 
 def _pick_loop_impl(impl: str):
@@ -248,13 +249,22 @@ class TicketAgent:
         # 长期记忆注入：把该用户最近的对话历史拼到 system 之后、当前问题之前。
         # 历史为空（新用户 / 评测独立 user_id）时，等价于改造前的 [system, user]，行为不变。
         history = self.memory.load_history(user_input.user_id, limit=6)
-        messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages.extend(history)
-        messages.append({"role": "user", "content": clean})
         ctx = {"user_id": user_input.user_id, "trace_id": trace_id}
 
-        with span("agent_loop", intent=intent):
-            loop_result: LoopResult = self._loop(self.llm, messages, ctx, self.s, on_token)
+        if self.s.agent_mode == "monolith":
+            # 单体回退路径：与改造前完全一致（一个循环握全部工具 + 通用 prompt）
+            messages: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+            messages.extend(history)
+            messages.append({"role": "user", "content": clean})
+            with span("agent_loop", intent=intent, mode="monolith"):
+                loop_result: LoopResult = self._loop(self.llm, messages, ctx, self.s, on_token)
+        else:
+            # Supervisor 多 Agent：主管（_route）派单给对口专家，专家只握自己领域工具
+            with span("supervisor_dispatch", intent=intent, mode="supervisor"):
+                specialist, loop_result = dispatch(
+                    intent, self.llm, history, clean, ctx, self.s, on_token
+                )
+            emit("supervisor_specialist", intent=intent, specialist=specialist)
 
         # 长期记忆落盘：把这一轮（用户问题 + 最终回答）存回，供后续会话回忆
         self.memory.save_turn(user_input.user_id, clean, loop_result.content)
