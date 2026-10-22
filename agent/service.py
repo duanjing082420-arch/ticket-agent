@@ -163,7 +163,12 @@ class TicketAgent:
 
     # ---------------- 主流程 ----------------
 
-    def handle(self, text: str, user_id: str = "anonymous") -> AgentResponse:
+    def handle(self, text: str, user_id: str = "anonymous", on_token=None) -> AgentResponse:
+        """处理一次用户输入。
+
+        on_token: 可选回调 (delta: str) -> None。传了就走流式生成，
+        供 SSE 端点逐字推送；不传则行为与原来完全一致。
+        """
         started = time.perf_counter()
         trace_id = new_trace_id()
         emit("request_start", user_id=user_id, input_len=len(text))
@@ -231,7 +236,7 @@ class TicketAgent:
         ctx = {"user_id": user_input.user_id, "trace_id": trace_id}
 
         with span("agent_loop", intent=intent):
-            loop_result: LoopResult = self._loop(self.llm, messages, ctx, self.s)
+            loop_result: LoopResult = self._loop(self.llm, messages, ctx, self.s, on_token)
 
         # 长期记忆落盘：把这一轮（用户问题 + 最终回答）存回，供后续会话回忆
         self.memory.save_turn(user_input.user_id, clean, loop_result.content)

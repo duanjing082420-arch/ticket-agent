@@ -20,7 +20,10 @@ FastAPI 会把普通 def 放进线程池执行，因此 agent.handle() 里 2~5 �
 
 from __future__ import annotations
 
+import json
+import queue
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -28,6 +31,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi import FastAPI, HTTPException  # noqa: E402
+from fastapi.responses import StreamingResponse  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 from agent.config import Settings, load_dotenv  # noqa: E402
@@ -106,6 +110,62 @@ def chat(req: ChatRequest) -> dict[str, Any]:
         "cost": resp.cost,
         "degraded": resp.degraded,
     }
+
+
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest):
+    """SSE 流式对话：逐字推送，消除长任务白屏。
+
+    为什么是「同步生成器 + StreamingResponse」而不是 async def：
+      Agent 的 LLM 客户端是同步阻塞的。写成 async def 却在里面调同步阻塞代码，
+      会把整个事件循环堵死 —— tutorials/day18_async_demo.py 实测过：
+      2 个并发从 2.01 秒劣化到 4.00 秒。
+      而 Starlette 会把**同步**生成器放进线程池迭代，既能边生成边推，又不占事件循环。
+
+    事件：token（增量文本）/ done（完成，带统计）/ error（异常）。
+    """
+    if _agent is None:
+        raise HTTPException(status_code=503, detail="服务未就绪")
+
+    q: queue.Queue = queue.Queue()
+
+    def worker() -> None:
+        # 在子线程跑同步的 Agent；token 通过队列交给生成器，避免阻塞事件循环
+        try:
+            resp = _agent.handle(req.text, user_id=req.user_id, on_token=lambda d: q.put(("token", d)))
+            q.put(("done", {
+                "behavior": resp.behavior,
+                "intent": resp.intent,
+                "tools_called": resp.tools_called,
+                "steps": resp.steps,
+                "stop_reason": resp.stop_reason,
+                "pending": resp.pending,
+                "trace_id": resp.trace_id,
+                "cost": resp.cost,
+            }))
+        except Exception as exc:
+            q.put(("error", f"{type(exc).__name__}: {exc}"))
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def event_gen():
+        while True:
+            kind, payload = q.get()
+            if kind == "token":
+                yield "event: token\ndata: " + json.dumps({"delta": payload}, ensure_ascii=False) + "\n\n"
+                continue  # 继续等下一个 token；漏了这行会在第一个 token 后就掉进 error 分支
+            if kind == "done":
+                yield "event: done\ndata: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
+                return
+            yield "event: error\ndata: " + json.dumps({"error": payload}, ensure_ascii=False) + "\n\n"
+            return
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        # X-Accel-Buffering: no —— 告诉 Nginx 不要缓冲，否则流式会被攒成一坨再发
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.post("/confirm")

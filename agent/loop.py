@@ -54,8 +54,14 @@ def run_loop(
     messages: list[dict[str, Any]],
     ctx: dict[str, Any],
     settings: Settings,
+    on_token=None,
 ) -> LoopResult:
-    """执行有界自主循环。messages 会被就地追加（调用方如需保留可自行深拷贝）。"""
+    """执行有界自主循环。messages 会被就地追加（调用方如需保留可自行深拷贝）。
+
+    on_token: 可选回调 (delta: str) -> None。传了就走流式 LLM 调用，
+    生成的每个 token 片段都会回调一次 —— 供 SSE 端点逐字推给前端。
+    不传则走普通的 llm.chat()，行为与改造前完全一致（保证评测不受影响）。
+    """
     started = time.monotonic()
     result = LoopResult(content="")
 
@@ -71,7 +77,11 @@ def run_loop(
             break
 
         with span("llm_step", step=step):
-            resp: LLMResult = llm.chat(messages, tools=TOOL_SCHEMAS)
+            # 只有传了 on_token 才走流式；否则保持原路径，确保非流式场景零变化
+            if on_token is not None:
+                resp: LLMResult = llm.stream_chat(messages, tools=TOOL_SCHEMAS, on_token=on_token)
+            else:
+                resp: LLMResult = llm.chat(messages, tools=TOOL_SCHEMAS)
 
         result.steps = step
         result.prompt_tokens += resp.prompt_tokens

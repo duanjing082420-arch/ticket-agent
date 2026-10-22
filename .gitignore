@@ -22,6 +22,8 @@ eval/*.json
 data/memory.db
 data/_eval_memory.db
 data/policy_vectors.json
+# chroma_db 是 Chroma 向量库的持久化目录（运行产物，可由 policies.md 重建）
+data/chroma_db/
 
 # 编辑器
 .vscode/

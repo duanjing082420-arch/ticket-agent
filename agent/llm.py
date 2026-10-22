@@ -136,6 +136,90 @@ class LLMClient:
         emit("llm_all_models_failed")
         return LLMResult(ok=False, error="llm_unavailable")
 
+    def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        on_token=None,
+    ) -> LLMResult:
+        """流式版 chat：每收到一个 token 片段就回调 on_token，结束后返回完整 LLMResult。
+
+        为什么是「同步流式」而不是 async：
+          本项目 LLM 客户端是同步阻塞的。写成 async def 却调同步阻塞代码，
+          会把整个事件循环堵死 —— tutorials/day18_async_demo.py 实测过：
+          2 个并发从 2.01 秒劣化到 4.00 秒。
+          同步生成器交给 StreamingResponse 后由 Starlette 放到线程池迭代，
+          既能逐字推送，又不占用事件循环。
+
+        on_token: 可选回调，签名 (delta: str) -> None。
+        """
+        if temperature is None:
+            temperature = self.s.llm_temperature
+        for attempt, model in enumerate((self.s.llm_model, self.s.llm_fallback_model)):
+            try:
+                return self._stream_once(model, messages, tools, temperature, on_token)
+            except RetryError as exc:
+                emit("llm_retry_exhausted", model=model, error=str(exc)[:200])
+                continue
+            except openai.OpenAIError as exc:
+                emit("llm_fatal_error", model=model, error=type(exc).__name__)
+                return LLMResult(ok=False, error=f"llm_error:{type(exc).__name__}", model=model)
+        emit("llm_all_models_failed")
+        return LLMResult(ok=False, error="llm_unavailable")
+
+    def _stream_once(self, model, messages, tools, temperature, on_token) -> LLMResult:
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True,
+            "stream_options": {"include_usage": True},  # 否则拿不到 token 用量，成本观测会失真
+        }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        if "deepseek" in self.s.llm_base_url.lower():
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+
+        content_parts: list[str] = []
+        acc: dict[int, dict[str, str]] = {}
+        usage = None
+        for chunk in self._client.chat.completions.create(**kwargs):
+            # ⚠ 别只在「choices 为空」的 chunk 上找 usage：
+            # 实测 DeepSeek 的 usage 出现在**仍带 choices** 的那条上，
+            # 只在空 choices 时取会导致 usage 恒为 None、成本观测失效。
+            if getattr(chunk, "usage", None) is not None:
+                usage = chunk.usage
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta.content:
+                content_parts.append(delta.content)
+                if on_token is not None:
+                    on_token(delta.content)
+            # 流式 tool_calls 是按 index 增量下发的，必须自己拼接 arguments
+            for tc in delta.tool_calls or []:
+                idx = tc.index
+                if idx not in acc:
+                    acc[idx] = {"id": tc.id or "", "name": tc.function.name or "", "arguments": ""}
+                if tc.function is not None and tc.function.arguments:
+                    acc[idx]["arguments"] += tc.function.arguments
+
+        tool_calls = [
+            {"id": v["id"], "name": v["name"], "arguments": v["arguments"]}
+            for _, v in sorted(acc.items())
+        ]
+        return LLMResult(
+            ok=True,
+            content="".join(content_parts),
+            tool_calls=tool_calls,
+            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            model=model,
+            degraded=False,
+        )
+
     def estimate_cost(self, prompt_tokens: int, completion_tokens: int) -> float:
         """成本估算。单价来自环境变量，默认 0，避免硬编造价格（见 README 待核实清单）。"""
         return (
