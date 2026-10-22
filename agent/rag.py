@@ -82,6 +82,11 @@ def _embed(texts: list[str]) -> list[list[float]]:
     return vectors
 
 
+def embed_query(text: str) -> list[float]:
+    """把一句话变成向量，供语义缓存 / 检索复用（禁止让调用方自己拼 batch）。"""
+    return _embed([text])[0]
+
+
 def _get_vectors() -> tuple[list[str], list[list[float]], list[dict[str, str]]]:
     """读缓存，或现算并写缓存。返回 (ids, vectors, chunks)。"""
     chunks = load_chunks()

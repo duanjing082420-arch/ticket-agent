@@ -109,6 +109,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
         "latency_ms": resp.latency_ms,
         "cost": resp.cost,
         "degraded": resp.degraded,
+        "cached": resp.cached,
     }
 
 
@@ -142,6 +143,7 @@ def chat_stream(req: ChatRequest):
                 "pending": resp.pending,
                 "trace_id": resp.trace_id,
                 "cost": resp.cost,
+                "cached": resp.cached,
             }))
         except Exception as exc:
             q.put(("error", f"{type(exc).__name__}: {exc}"))

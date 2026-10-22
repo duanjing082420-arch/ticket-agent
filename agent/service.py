@@ -33,6 +33,7 @@ from .prompts import (
 )
 from .tools import confirm_pending
 from .memory import MemoryStore
+from .cache import SemanticCache
 
 
 def _pick_loop_impl(impl: str):
@@ -116,6 +117,7 @@ class AgentResponse:
     cost: float = 0.0
     intent: str = ""
     degraded: bool = False
+    cached: bool = False
 
 
 class TicketAgent:
@@ -124,6 +126,7 @@ class TicketAgent:
         self.llm = LLMClient(settings)
         self.memory = MemoryStore(self.s.memory_db_path)  # 长期记忆：跨会话记住每个用户
         self._loop = _pick_loop_impl(settings.loop_impl)  # 自主循环实现（可切换）
+        self.cache = SemanticCache(settings)  # 语义缓存：相似问题短路返回历史答案
 
     # ---------------- 路由 ----------------
 
@@ -204,6 +207,21 @@ class TicketAgent:
                     trace_id=trace_id,
                 )
 
+        # 语义缓存短路：相似问题直接返回历史答案，连路由+LLM 都省（见 agent/cache.py）。
+        # 放最前面是为了最大化收益；缓存未命中/出错会自动降级，绝不拖垮主链路。
+        with span("semantic_cache"):
+            cached_answer = self.cache.get(clean)
+        if cached_answer is not None:
+            return AgentResponse(
+                behavior=BEHAVIOR_ANSWER,
+                output=cached_answer,
+                trace_id=trace_id,
+                intent="cached",
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                cost=0.0,
+                cached=True,
+            )
+
         with span("route"):
             intent = self._route(clean)
 
@@ -254,6 +272,11 @@ class TicketAgent:
             cost=round(cost, 6),
         )
 
+        # 写回语义缓存：只缓存"信息类且成功作答"的结果（faq/query 的政策答案与用户无关，可复用）；
+        # 动作类（查订单等依赖用户数据）和转人工/追问不缓存，避免吐错答案。
+        if intent in {"faq", "query"} and behavior == BEHAVIOR_ANSWER and not loop_result.degraded:
+            self.cache.put(clean, loop_result.content)
+
         return AgentResponse(
             behavior=behavior,
             output=loop_result.content,
@@ -266,6 +289,7 @@ class TicketAgent:
             cost=cost,
             intent=intent,
             degraded=loop_result.degraded,
+            cached=False,
         )
 
     @staticmethod

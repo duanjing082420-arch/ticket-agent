@@ -71,6 +71,14 @@ class Settings:
     # —— 输入校验上限 ——
     max_input_chars: int
 
+    # —— 语义缓存（见 agent/cache.py：用意思相似复用历史答案，省 LLM 调用）——
+    cache_enabled: bool          # 总开关：false=完全关闭，命中逻辑直接降级为未命中
+    cache_backend: str          # memory=进程内（零依赖）/ upstash=云 Redis（零本地安装）
+    cache_ttl_s: int            # 单条缓存存活秒数，到期自动失效，避免政策更新后吐旧答案
+    cache_sim_threshold: float  # 相似度阈值：超过才算命中，越高越保守（防错答）
+    upstash_url: str            # Upstash Redis REST 地址（CACHE_BACKEND=upstash 时必填）
+    upstash_token: str          # Upstash Redis REST 令牌（禁止硬编码、禁止打印）
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -89,4 +97,10 @@ class Settings:
             price_per_1k_input=float(_env("PRICE_PER_1K_INPUT", "0")),
             price_per_1k_output=float(_env("PRICE_PER_1K_OUTPUT", "0")),
             max_input_chars=int(_env("MAX_INPUT_CHARS", "2000")),
+            cache_enabled=_env("CACHE_ENABLED", "false").lower() in {"1", "true", "yes", "on"},
+            cache_backend=_env("CACHE_BACKEND", "memory"),
+            cache_ttl_s=int(_env("CACHE_TTL_S", "86400")),
+            cache_sim_threshold=float(_env("CACHE_SIM_THRESHOLD", "0.82")),
+            upstash_url=_env("UPSTASH_REDIS_REST_URL", ""),
+            upstash_token=_env("UPSTASH_REDIS_REST_TOKEN", ""),
         )
