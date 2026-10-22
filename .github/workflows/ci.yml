@@ -1,0 +1,45 @@
+# 免费门禁：每次 push / PR 都跑，零成本、秒级。
+#
+# 为什么不在这里跑 26 条评测（面试会追问）：
+#   1. 花钱：全量评测每次约 0.11 元（真实 LLM 调用），push 频繁会持续产生费用；
+#   2. flaky：LLM 评测天生不稳定（踩坑 #9，N05/N07 时好时坏），
+#      让它卡住每次 push 会把"随机波动"变成"红色构建"，团队很快就会无视它；
+#   3. 慢：26 条真实调用约 1~2 分钟，作为提交前置反馈太重。
+# 所以这里只放**确定性、免费**的检查：能挡住"改坏工具层/校验逻辑"这类低级回归，
+# 真正的业务门禁交给 eval.yml 手动触发。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  selftest:
+    name: selftest（不联网、不调 LLM）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11" # 与 Dockerfile 的 python:3.11-slim 对齐
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      # app.py --selftest 在 load_dotenv() 之前执行，不需要任何密钥即可运行。
+      # 它验证工具层、幂等键、注入预检、输入校验 —— 都是纯确定性逻辑。
+      - name: 自检
+        run: python app.py --selftest
+
+  docker:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t ticket-agent .

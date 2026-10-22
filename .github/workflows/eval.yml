@@ -1,0 +1,57 @@
+# 付费门禁：26 条真实用例评测，手动触发（发布前点一次）。
+#
+# 为什么是手动而不是每次 push（见 ci.yml 顶部注释）：
+#   花钱（约 0.11 元/次）+ 有 flaky 风险 + 慢。
+# 想做定时回归也可以：把下面 schedule 的注释放开即可（每周一 UTC 3 点）。
+
+name: Eval
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "0 3 * * 1"
+
+jobs:
+  eval:
+    name: 26 条确定性评测
+    runs-on: ubuntu-latest
+
+    env:
+      # ⚠️ 这两个是实测踩出来的坑，缺一个结果就不可信：
+      # CACHE_ENABLED=false：语义缓存命中会直接短路返回（tools_called 为空），
+      #                     导致 must_call_tool 这类行为断言**误判失败**。
+      # MEMORY_BACKEND=sqlite：否则 26 条会往云端 TiDB 真写，
+      #                       既污染数据又给每条用例加一次网络往返。
+      CACHE_ENABLED: "false"
+      MEMORY_BACKEND: "sqlite"
+      LLM_TEMPERATURE: "0" # 保证可复现，避免 flaky
+
+      # 凭据全部来自仓库 Secrets，绝不写进代码（硬约束 C6）
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+      LLM_FALLBACK_MODEL: ${{ secrets.LLM_FALLBACK_MODEL }}
+      EMBEDDING_API_KEY: ${{ secrets.EMBEDDING_API_KEY }}
+      EMBEDDING_BASE_URL: ${{ secrets.EMBEDDING_BASE_URL }}
+      EMBEDDING_MODEL: ${{ secrets.EMBEDDING_MODEL }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 跑评测
+        run: python eval/run_eval.py --out eval/report.json
+
+      # if: always() —— 评测失败时也要把报告传上来，否则没法复盘是哪条挂了
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eval-report
+          path: eval/report.json
