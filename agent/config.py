@@ -80,6 +80,13 @@ class Settings:
     upstash_url: str            # Upstash Redis REST 地址（CACHE_BACKEND=upstash 时必填）
     upstash_token: str          # Upstash Redis REST 令牌（禁止硬编码、禁止打印）
 
+    # —— 记忆存储后端（见 agent/storage.py：SQLite / TiDB 可插拔）——
+    memory_backend: str         # sqlite=本地单文件（默认，零依赖）/ mysql=TiDB Cloud Serverless（云上 MySQL）
+    tidb_sql_url: str           # TiDB Serverless SQL API 端点，形如 https://http-<host>/v1beta/sql
+    tidb_user: str              # TiDB 用户名（禁止硬编码、禁止打印）
+    tidb_password: str          # TiDB 密码（禁止硬编码、禁止打印）
+    tidb_database: str          # TiDB 数据库名
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
@@ -105,4 +112,9 @@ class Settings:
             cache_sim_threshold=float(_env("CACHE_SIM_THRESHOLD", "0.82")),
             upstash_url=_env("UPSTASH_REDIS_REST_URL", ""),
             upstash_token=_env("UPSTASH_REDIS_REST_TOKEN", ""),
+            memory_backend=_env("MEMORY_BACKEND", "sqlite"),
+            tidb_sql_url=_env("TIDB_SQL_URL", ""),
+            tidb_user=_env("TIDB_USER", ""),
+            tidb_password=_env("TIDB_PASSWORD", ""),
+            tidb_database=_env("TIDB_DATABASE", ""),
         )

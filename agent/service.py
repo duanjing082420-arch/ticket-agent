@@ -125,7 +125,7 @@ class TicketAgent:
     def __init__(self, settings: Settings) -> None:
         self.s = settings
         self.llm = LLMClient(settings)
-        self.memory = MemoryStore(self.s.memory_db_path)  # 长期记忆：跨会话记住每个用户
+        self.memory = MemoryStore(self.s)  # 长期记忆：跨会话记住每个用户（后端可插拔）
         self._loop = _pick_loop_impl(settings.loop_impl)  # 自主循环实现（可切换）
         self.cache = SemanticCache(settings)  # 语义缓存：相似问题短路返回历史答案
 
