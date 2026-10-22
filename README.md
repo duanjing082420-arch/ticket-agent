@@ -314,7 +314,7 @@ prompt v2 的每一条规则都精确对应一条真失败，并且加了豁免�
 - [x] **评测确定性**：温度可调 + 评测隔离，结果可复现
 - [x] **服务化**：FastAPI + 健康检查 + 幂等确认端点
 - [x] **容器化**：Dockerfile + .dockerignore（密钥不进镜像）
-- [ ] CI：每次提交自动跑门禁（未做，见已知边界）
+- [x] **CI 两层门禁**：push/PR 跑免费自检 + docker build；26 条付费评测手动触发（见 `.github/workflows/`）
 
 ## 灰度与回滚
 
@@ -361,9 +361,14 @@ prompt v2 的每一条规则都精确对应一条真失败，并且加了豁免�
 
 诚实清单，这些是真没做到的：
 
-- **CI 未接入**：`.github/workflows` 不存在，每次提交不会自动跑门禁。
-  建议做法：每次 push 只跑免费的 `--selftest` + docker build；**花钱且有 flaky 风险的全量 LLM 评测放手动触发或定时**。
-- **Dockerfile 未实际构建验证**：本机无 Docker 环境，镜像能否成功 build 尚未验证过。
+- **CI 已接入，但分了两层**（`.github/workflows/`）：
+  - `ci.yml`——**每次 push/PR 自动跑**，`app.py --selftest`（不联网、不调 LLM）+ `docker build`，零成本、秒级，挡住工具层/校验逻辑类回归。
+  - `eval.yml`——**手动触发**（`gh workflow run eval.yml`），跑 26 条真实用例。
+    为什么不放进每次 push：① 花钱（约 0.11 元/次）；② **flaky**（LLM 评测天生不稳定，见排障实录 #6），
+    让它卡住每次提交会把"随机波动"变成"红色构建"，团队很快就学会无视它；③ 慢（约 1~2 分钟），作为提交前置反馈太重。
+  - 评测 workflow 里有两个必须的环境变量：`CACHE_ENABLED=false`（缓存短路会让 `must_call_tool` 断言误判失败）、
+    `MEMORY_BACKEND=sqlite`（否则 26 条会往云端真写，还每条加一次网络往返）。
+- **Dockerfile 已由 CI 验证构建**：本机无 Docker 环境，现由 `ci.yml` 的 docker build job 在 GitHub Runner 上验证。
 - **评测集仅 26 条**，normal 仅 14 条，覆盖不足；未覆盖多意图、上下文依赖、工具返回空等场景。
 - **`chitchat` / `unknown` 不走记忆**：这两个短路分支不进主流程，所以闲聊不会被记住。
 - **幂等表仍是内存实现**，重启即失（注意：这与"记忆持久化"是两件事，只有会话记忆落了盘）。

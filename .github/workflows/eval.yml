@@ -26,6 +26,11 @@ jobs:
       MEMORY_BACKEND: "sqlite"
       LLM_TEMPERATURE: "0" # 保证可复现，避免 flaky
 
+      # 单价必须显式给：CI 里没有 .env，缺失会让成本恒为 0，成本观测等于失效
+      # （README 排障实录 #3 就是这个问题）。这是公开单价不是密钥，可以放心写在这里。
+      PRICE_PER_1K_INPUT: "0.00213"
+      PRICE_PER_1K_OUTPUT: "0.00852"
+
       # 凭据全部来自仓库 Secrets，绝不写进代码（硬约束 C6）
       LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
       LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
